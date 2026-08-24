@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop",
+    "crates/engine-config",
+    "crates/engine-audio",
+    "crates/engine-vad",
+    "crates/engine-stt",
+    "crates/engine-rtstt",
+    "crates/engine-dialogue",
+    "crates/engine-orchestrator",
+    "crates/engine-context",
+    "crates/engine-llm",
+    "crates/engine-store",
+    "crates/engine-ipc",
+    "crates/engine-tts",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+
+[workspace.dependencies]
+tokio = { version = "1.35", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+cpal = "0.15"
+png = "0.17"
+base64 = "0.21"
+ort = { version = "2.0.0-rc.13", features = ["load-dynamic"] }
+reqwest = { version = "0.11", features = ["json", "stream", "multipart", "rustls-tls"] }
+tauri = { version = "2.0", features = [] }
+tauri-plugin-global-shortcut = "2"
+raw-window-handle = "0.6"
+rusqlite = { version = "0.31", features = ["bundled"] }
+notify = "6.1"
+tokio-stream = "0.1"
+futures = "0.3"
+uuid = { version = "1.6", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+hound = "3.5"
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+windows = { version = "0.52", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi"] }

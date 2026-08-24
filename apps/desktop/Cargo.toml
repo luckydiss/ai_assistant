@@ -1,0 +1,36 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tauri.workspace = true
+tauri-plugin-global-shortcut.workspace = true
+raw-window-handle.workspace = true
+windows.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+engine-config = { path = "../../crates/engine-config" }
+engine-audio = { path = "../../crates/engine-audio" }
+engine-vad = { path = "../../crates/engine-vad" }
+engine-stt = { path = "../../crates/engine-stt" }
+engine-rtstt = { path = "../../crates/engine-rtstt" }
+engine-dialogue = { path = "../../crates/engine-dialogue" }
+engine-context = { path = "../../crates/engine-context" }
+engine-llm = { path = "../../crates/engine-llm" }
+engine-orchestrator = { path = "../../crates/engine-orchestrator" }
+engine-store = { path = "../../crates/engine-store" }
+engine-tts = { path = "../../crates/engine-tts" }
+cpal.workspace = true
+png.workspace = true
+base64.workspace = true
+
+[build-dependencies]
+tauri-build = "2.0"

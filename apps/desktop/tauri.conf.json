@@ -1,0 +1,23 @@
+{
+  "productName": "Interview Assistant",
+  "version": "0.1.0",
+  "identifier": "com.interview.assistant",
+  "build": {
+    "frontendDist": "./ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Interview Assistant",
+        "width": 1100,
+        "height": 700,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

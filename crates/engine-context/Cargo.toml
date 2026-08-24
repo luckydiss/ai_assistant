@@ -1,0 +1,15 @@
+[package]
+name = "engine-context"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+engine-dialogue = { path = "../engine-dialogue" }
+
+[dev-dependencies]
+anyhow.workspace = true
+chrono.workspace = true

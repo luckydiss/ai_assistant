@@ -1,0 +1,17 @@
+[package]
+name = "engine-orchestrator"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+engine-context = { path = "../engine-context" }
+engine-llm = { path = "../engine-llm" }
+engine-dialogue = { path = "../engine-dialogue" }
+
+[dev-dependencies]
+anyhow.workspace = true

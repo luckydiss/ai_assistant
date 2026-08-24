@@ -1,0 +1,19 @@
+[package]
+name = "engine-llm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+futures.workspace = true
+engine-context = { path = "../engine-context" }
+
+[dev-dependencies]
+anyhow.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+<!-- SVG-спрайт: все иконки 16x16, stroke=currentColor -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-mic" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M4 8a4 4 0 0 0 8 0M8 12v2" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-home" viewBox="0 0 16 16"><path d="M3 8l5-5 5 5M5 7v6h6V7" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-notes" viewBox="0 0 16 16"><rect x="4" y="2" width="8" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 5h4M6 8h4" stroke="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 16 16"><rect x="2" y="5" width="8" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 8l4-2v5l-4-2" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-crop" viewBox="0 0 16 16"><path d="M3 6V3h3M13 10v3h-3M3 3l10 10" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-spk" viewBox="0 0 16 16"><path d="M3 6v4h3l4 3V3L6 6H3z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M12 6a3 3 0 0 1 0 4" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  <symbol id="i-erase" viewBox="0 0 16 16"><path d="M4 10l6-6 3 3-6 6H4v-3zM4 13h9" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-chats" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 3v10" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11 5V3H3v8h2" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  <symbol id="i-del" viewBox="0 0 16 16"><path d="M3 4h10M6 4V3h4v1M5 4l1 9h4l1-9" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  <symbol id="i-mic-s" viewBox="0 0 16 16"><rect x="6" y="3" width="4" height="7" rx="2" fill="currentColor"/></symbol>
+</svg>
+
+<div id="app">
+  <header id="topbar">
+    <span id="logo">✳</span>
+    <button class="ic" id="btnMute" title="Микрофон"><svg><use href="#i-mic"/></svg></button>
+    <button class="ic dd" id="btnStt" title="Режим STT"><svg><use href="#i-mic"/></svg><span class="car">▾</span></button>
+    <div id="drag" title="Перетащить окно"><div class="grip"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+    <button class="pill" id="ddModel"><span class="dot"></span><span id="modelName">—</span><span class="car">▾</span></button>
+    <button class="ic" id="btnNotes" title="Заметки"><svg><use href="#i-notes"/></svg></button>
+    <button class="ic" id="btnHome" title="Домой"><svg><use href="#i-home"/></svg></button>
+  </header>
+
+  <div id="main">
+    <nav id="rail"><div id="chats"></div><button class="ic" id="btnNewChat">+</button></nav>
+    <div id="feed"></div>
+  </div>
+
+  <div id="partialLine" hidden></div>
+
+  <div id="qa">
+    <button class="qa" id="qaAnalyze"><span class="ast">✳</span>Анализ экрана</button>
+    <button class="qa" id="qaSay"><span class="ast">✳</span>Что сказать</button>
+    <button class="qa" id="qaSummary"><span class="ast">✳</span>Резюме</button>
+  </div>
+
+  <div id="inputrow">
+    <input id="input" placeholder="Сообщение или вопрос...">
+    <button id="btnSend">↑</button>
+  </div>
+
+  <footer id="toolbar">
+    <button class="ic tgl" id="btnChats" title="Чаты"><svg><use href="#i-chats"/></svg></button>
+    <button class="pill" id="ddContext"><span id="ctxName">Контекст</span><span class="car">▾</span></button>
+    <button class="ic" id="btnShotRegion" title="Скриншот области"><svg><use href="#i-crop"/></svg></button>
+    <button class="ic" id="btnShotFull" title="Скриншот экрана"><svg><use href="#i-cam"/></svg></button>
+    <button class="ic tgl" id="btnTts" title="Озвучка"><svg><use href="#i-spk"/></svg></button>
+    <button class="ic tgl" id="btnAuto" title="Автоответы"><svg><use href="#i-bolt"/></svg></button>
+    <button class="ic dd" id="btnAi" title="Функции ИИ"><svg><use href="#i-bolt"/></svg><span class="car">▾</span></button>
+    <button class="ic" id="btnReset" title="Сбросить контекст"><svg><use href="#i-erase"/></svg></button>
+  </footer>
+</div>
+
+<button id="fabDown">↓</button>
+<div id="errBadge">!</div>
+
+<div class="corner nw" title="Растянуть"></div>
+<div class="corner ne" title="Растянуть"></div>
+<div class="corner sw" title="Растянуть"></div>
+<div class="corner se" title="Растянуть"></div>
+
+<div class="pane" id="paneStt" hidden>
+  <label>Провайдер<select id="selSttProvider"><option value="soniox">Soniox (RT)</option><option value="groq">Groq</option><option value="deepgram">Deepgram</option></select></label>
+  <label>Модель<select id="selSttModel"><option>stt-rt-v5</option><option>nova-3-general</option><option>whisper-large-v3-turbo</option></select></label>
+  <label>Режим записи<select id="selSttMode"><option value="vad">Авто (VAD)</option><option value="manual">Ручной</option></select></label>
+  <label>Язык<select id="selSttLang"><option value="auto">Авто</option><option value="ru">Русский</option><option value="en">English</option></select></label>
+</div>
+<div class="pane" id="paneNotes" hidden><div id="notesList"></div></div>
+<div class="pane" id="paneCtx" hidden><div id="ctxList"></div></div>
+<div class="pane" id="paneAi" hidden>
+  <label class="chk"><input type="checkbox" id="tglSearch">Поиск в интернете</label>
+  <label class="chk"><input type="checkbox" id="tglNotesRag">Использовать заметки</label>
+</div>
+<div id="notePane" hidden><pre id="noteText"></pre></div>
+
+<script src="overlay.js"></script>
+</body></html>

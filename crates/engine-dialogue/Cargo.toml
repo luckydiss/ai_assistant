@@ -1,0 +1,17 @@
+[package]
+name = "engine-dialogue"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+tracing-subscriber.workspace = true
