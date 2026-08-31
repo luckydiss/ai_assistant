@@ -1,0 +1,30 @@
+{
+  "name": "ui-next",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
+    "lighthouse": "lighthouse http://localhost:1420 --output html --output-path ./lighthouse-report.html --chrome-flags=\"--headless\"",
+    "axe": "axe http://localhost:1420 --save axe-report.json"
+  },
+  "devDependencies": {
+    "@axe-core/cli": "^4.13.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tauri-apps/api": "^2.11.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^24.13.3",
+    "autoprefixer": "^10.5.4",
+    "esbuild": "^0.28.2",
+    "lighthouse": "^13.4.1",
+    "postcss": "^8.5.26",
+    "svelte": "^5.56.10",
+    "svelte-check": "^4.7.6",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  }
+}
