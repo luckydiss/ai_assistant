@@ -17,6 +17,8 @@
   <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11 5V3H3v8h2" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
   <symbol id="i-del" viewBox="0 0 16 16"><path d="M3 4h10M6 4V3h4v1M5 4l1 9h4l1-9" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
   <symbol id="i-mic-s" viewBox="0 0 16 16"><rect x="6" y="3" width="4" height="7" rx="2" fill="currentColor"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="4" r="1.7" fill="var(--panel-solid, #1c1d21)" stroke="currentColor" stroke-width="1.4"/><circle cx="10.5" cy="8" r="1.7" fill="var(--panel-solid, #1c1d21)" stroke="currentColor" stroke-width="1.4"/><circle cx="5" cy="12" r="1.7" fill="var(--panel-solid, #1c1d21)" stroke="currentColor" stroke-width="1.4"/></symbol>
 </svg>
 
 <div id="app">
@@ -25,7 +27,8 @@
     <button class="ic" id="btnMute" title="Микрофон"><svg><use href="#i-mic"/></svg></button>
     <button class="ic dd" id="btnStt" title="Режим STT"><svg><use href="#i-mic"/></svg><span class="car">▾</span></button>
     <div id="drag" title="Перетащить окно"><div class="grip"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
-    <button class="pill" id="ddModel"><span class="dot"></span><span id="modelName">—</span><span class="car">▾</span></button>
+    <button class="pill" id="ddModel"><span class="ast">✳</span><span id="modelName">—</span><span class="car">▾</span></button>
+    <button class="ic" id="btnStop" title="Остановить генерацию" hidden><svg><use href="#i-stop"/></svg></button>
     <button class="ic" id="btnNotes" title="Заметки"><svg><use href="#i-notes"/></svg></button>
     <button class="ic" id="btnHome" title="Домой"><svg><use href="#i-home"/></svg></button>
   </header>
@@ -34,8 +37,6 @@
     <nav id="rail"><div id="chats"></div><button class="ic" id="btnNewChat">+</button></nav>
     <div id="feed"></div>
   </div>
-
-  <div id="partialLine" hidden></div>
 
   <div id="qa">
     <button class="qa" id="qaAnalyze"><span class="ast">✳</span>Анализ экрана</button>
@@ -55,7 +56,7 @@
     <button class="ic" id="btnShotFull" title="Скриншот экрана"><svg><use href="#i-cam"/></svg></button>
     <button class="ic tgl" id="btnTts" title="Озвучка"><svg><use href="#i-spk"/></svg></button>
     <button class="ic tgl" id="btnAuto" title="Автоответы"><svg><use href="#i-bolt"/></svg></button>
-    <button class="ic dd" id="btnAi" title="Функции ИИ"><svg><use href="#i-bolt"/></svg><span class="car">▾</span></button>
+    <button class="ic dd" id="btnAi" title="Функции ИИ"><svg><use href="#i-sliders"/></svg><span class="car">▾</span></button>
     <button class="ic" id="btnReset" title="Сбросить контекст"><svg><use href="#i-erase"/></svg></button>
   </footer>
 </div>
@@ -81,6 +82,30 @@
   <label class="chk"><input type="checkbox" id="tglNotesRag">Использовать заметки</label>
 </div>
 <div id="notePane" hidden><pre id="noteText"></pre></div>
+
+<div id="modelModal" hidden>
+  <div id="mmCard">
+    <div id="mmHead">
+      <span>Выбор модели</span>
+      <button class="ic" id="mmClose"><svg><use href="#i-del"/></svg></button>
+    </div>
+    <div id="mmBody">
+      <div id="mmProviders"></div>
+      <div id="mmModels"></div>
+    </div>
+    <div id="mmReason">
+      <div id="mmReasonHead">
+        <span class="t">Уровень рассуждений</span>
+        <span id="mmReasonVal" class="v">Средний</span>
+      </div>
+      <div class="d">Чем выше уровень, тем дольше формируется ответ, но тем выше его качество</div>
+      <input type="range" id="mmRange" min="0" max="4" step="1" value="2">
+      <div id="mmReasonLabels">
+        <span>Выкл</span><span>Низ</span><span>Сред</span><span>Выс</span><span>Макс</span>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script src="overlay.js"></script>
 </body></html>

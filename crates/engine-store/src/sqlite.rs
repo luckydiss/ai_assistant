@@ -25,6 +25,7 @@ pub struct MeetingRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextRow {
     pub id: String,
     pub name: String,

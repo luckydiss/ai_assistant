@@ -675,6 +675,15 @@ async fn start_batch(
                             text: turn.text.clone(),
                         });
                         persist_turn(&store_stt, &session_stt, &meeting_stt, &turn).await;
+                        if turn.speaker == Speaker::Interviewer {
+                            let services = handle2.state::<Arc<AppServices>>().inner().clone();
+                            crate::commands::sync_ctx_builder(
+                                &handle2,
+                                &services,
+                                Some(meeting_stt.clone()),
+                            )
+                            .await;
+                        }
                         orch2.on_turn(turn);
                     }
                 }

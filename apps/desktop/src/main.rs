@@ -28,7 +28,12 @@ fn dispatch(app: &AppHandle, action: &str) {
     match action {
         "manual" => {
             tracing::info!("hotkey manual trigger");
-            services.orch.manual(None, None);
+            let app2 = app.clone();
+            let services_owned = app.state::<Arc<AppServices>>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                commands::sync_ctx_builder(&app2, &services_owned, None).await;
+                services_owned.orch.manual(None, None);
+            });
         }
         "hide" => {
             tracing::info!("hotkey hide overlay");
@@ -63,8 +68,9 @@ fn dispatch(app: &AppHandle, action: &str) {
             tracing::info!("hotkey {action} (018 screenshots)");
             let region = action == "screenshot_region";
             let services_owned = app.state::<Arc<AppServices>>().inner().clone();
+            let app2 = app.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = commands::screen_analyze_inner(&services_owned, region).await;
+                let _ = commands::screen_analyze_inner(app2, &services_owned, region).await;
             });
         }
         "tts" => {
@@ -138,20 +144,32 @@ fn main() -> anyhow::Result<()> {
                 cfg.prompts.system.clone(),
                 cfg.prompts.persona.clone(),
                 8000,
-            );
+            )
+            .with_manual_system(cfg.prompts.manual_system.clone());
+            use engine_models::ModelProvider as _;
+            let provider = cfg
+                .get_provider()
+                .map_err(std::io::Error::other)?;
             let llm = LlmClient::new(
-                cfg.llm
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.openai.com/v1".into()),
-                cfg.llm.api_key.clone(),
+                provider.base_url().to_string(),
+                provider.api_key().to_string(),
                 cfg.llm.model.clone(),
                 cfg.llm.temperature,
                 cfg.llm.max_tokens,
                 cfg.llm.reasoning_effort.clone(),
             )?
-            .with_search(cfg.llm.search_enabled, cfg.llm.search_tool_json.clone());
-            let orch = Arc::new(Orchestrator::new(ctx, llm, false));
+            .with_search(cfg.llm.search_enabled, cfg.llm.search_tool_json.clone())
+            .with_catalog(std::sync::Arc::new(provider));
+            let orch = Arc::new(
+                Orchestrator::new(ctx, llm, false)
+                    .with_memory(
+                        cfg.context.recent_window,
+                        cfg.context.key_turns_cap,
+                        cfg.context.summary_max_tokens,
+                        cfg.context.summary_model.clone(),
+                    )
+            );
+            orch.set_cancel_policy(cfg.chat.cancel_on_resend, cfg.chat.cancel_mode == "keep");
 
             // --- session store + app services ---
             let store = Arc::new(Mutex::new(SessionStore::open("history.db")?));
@@ -163,9 +181,10 @@ fn main() -> anyhow::Result<()> {
                     let msgs: Vec<engine_store::ChatMsg> = turns
                         .iter()
                         .map(|t| {
-                            let speaker = match t.speaker {
-                                Speaker::Interviewer => "I",
-                                Speaker::Candidate => "C",
+                            let speaker = match (t.speaker, t.typed) {
+                                (Speaker::Interviewer, false) => "I",
+                                (Speaker::Interviewer, true) => "user",
+                                (Speaker::Candidate, _) => "C",
                             };
                             engine_store::ChatMsg {
                                 speaker: speaker.into(),
@@ -262,6 +281,12 @@ fn main() -> anyhow::Result<()> {
             commands::update_audio_settings,
             commands::list_audio_devices,
             commands::get_config,
+            commands::config_set,
+            commands::cancel_generation,
+            commands::context_apply,
+            commands::context_current,
+            commands::models_list,
+            commands::llm_set,
             commands::tts_play_last,
             commands::tts_speak,
             commands::tts_set_mode,

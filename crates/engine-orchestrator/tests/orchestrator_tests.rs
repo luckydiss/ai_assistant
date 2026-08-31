@@ -17,6 +17,8 @@ fn turn(speaker: Speaker, text: &str) -> Turn {
         text: text.into(),
         start_time: now,
         end_time: now,
+    
+            typed: false,
     }
 }
 
@@ -380,4 +382,133 @@ async fn auto_toggle_fires() {
 
     assert!(result);
     assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+// ── 028: long-context memory ─────────────────────────────
+
+use engine_orchestrator::is_key_turn;
+
+#[test]
+fn key_question_detected() {
+    let t = turn(Speaker::Interviewer, "Объясните, как работает event loop");
+    assert!(is_key_turn(&t));
+    let t = turn(Speaker::Interviewer, "напиши функцию сортировки");
+    assert!(is_key_turn(&t));
+    let t = turn(Speaker::Interviewer, "почему выбран этот подход");
+    assert!(is_key_turn(&t));
+    let long = "х".repeat(201);
+    let t = turn(Speaker::Candidate, &long);
+    assert!(is_key_turn(&t));
+}
+
+#[test]
+fn short_not_key() {
+    let t = turn(Speaker::Candidate, "да, понял");
+    assert!(!is_key_turn(&t));
+    let t = turn(Speaker::Interviewer, "хорошо");
+    assert!(!is_key_turn(&t));
+}
+
+async fn orch_memory_capture(
+    sse: String,
+    json: String,
+    body_out: Arc<Mutex<String>>,
+    recent_window: usize,
+    key_cap: usize,
+) -> Orchestrator {
+    let (url, _count) = mock::spawn_mock_auto(sse, json, body_out).await;
+    let llm = LlmClient::new(url, "k".into(), "m".into(), 0.0, 100, None).unwrap();
+    let ctx = ContextBuilder::new("SYS".into(), "persona".into(), 8000);
+    Orchestrator::new(ctx, llm, false).with_memory(recent_window, key_cap, 300, String::new())
+}
+
+#[tokio::test]
+async fn recent_window_drain_and_summary_updates() {
+    let body_out = Arc::new(Mutex::new(String::new()));
+    let orch = orch_memory_capture(
+        mock::sse_body(&["ok"]),
+        "RES".into(),
+        body_out.clone(),
+        2,
+        12,
+    )
+    .await;
+
+    for i in 1..=5 {
+        orch.on_turn(turn(
+            Speaker::Interviewer,
+            &format!("объясни вопрос номер {i}"),
+        ));
+    }
+    // ждём асинхронную суммаризацию
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let mut rx = orch.subscribe();
+    orch.manual(None, None);
+    timeout(Duration::from_secs(5), async {
+        while let Ok(ev) = rx.recv().await {
+            if matches!(ev, OrchEvent::Done { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("timed out");
+
+    let body = body_out.lock().unwrap().clone();
+    // summary обновился из мока
+    assert!(body.contains("Резюме всей сессии: RES"));
+    // слои в правильном порядке
+    let pos_summary = body.find("Резюме всей сессии").unwrap();
+    let pos_keys = body.find("Ключевые моменты").unwrap();
+    let pos_recent = body.find("Недавние реплики").unwrap();
+    assert!(pos_summary < pos_keys && pos_keys < pos_recent);
+    // ключевые моменты содержат вытесненные реплики (они все «ключевые»)
+    let keys_section = &body[pos_keys..pos_recent];
+    assert!(keys_section.contains("вопрос номер 1"));
+    assert!(keys_section.contains("вопрос номер 3"));
+    // окно: только 2 последние реплики в recent
+    let recent_section = &body[pos_recent..];
+    assert!(recent_section.contains("вопрос номер 5"));
+    assert!(recent_section.contains("вопрос номер 4"));
+    assert!(!recent_section.contains("вопрос номер 1"));
+    assert!(!recent_section.contains("вопрос номер 3"));
+}
+
+#[tokio::test]
+async fn key_turns_cap_fifo() {
+    let body_out = Arc::new(Mutex::new(String::new()));
+    let orch = orch_memory_capture(
+        mock::sse_body(&["ok"]),
+        "RES".into(),
+        body_out.clone(),
+        50,
+        1,
+    )
+    .await;
+
+    orch.on_turn(turn(Speaker::Interviewer, "объясни альфа подробнее"));
+    orch.on_turn(turn(Speaker::Interviewer, "объясни бета подробнее"));
+    orch.on_turn(turn(Speaker::Interviewer, "объясни гамма подробнее"));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut rx = orch.subscribe();
+    orch.manual(None, None);
+    timeout(Duration::from_secs(5), async {
+        while let Ok(ev) = rx.recv().await {
+            if matches!(ev, OrchEvent::Done { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("timed out");
+
+    let body = body_out.lock().unwrap().clone();
+    let start = body.find("Ключевые моменты").expect("no key section");
+    let end = body.find("Недавние реплики").expect("no recent section");
+    let section = &body[start..end];
+    assert!(section.contains("гамма"));
+    assert!(!section.contains("альфа"));
+    assert!(!section.contains("бета"));
 }

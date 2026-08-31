@@ -16,6 +16,7 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 engine-config = { path = "../../crates/engine-config" }
 engine-audio = { path = "../../crates/engine-audio" }
@@ -25,6 +26,7 @@ engine-rtstt = { path = "../../crates/engine-rtstt" }
 engine-dialogue = { path = "../../crates/engine-dialogue" }
 engine-context = { path = "../../crates/engine-context" }
 engine-llm = { path = "../../crates/engine-llm" }
+engine-models = { path = "../../crates/engine-models" }
 engine-orchestrator = { path = "../../crates/engine-orchestrator" }
 engine-store = { path = "../../crates/engine-store" }
 engine-tts = { path = "../../crates/engine-tts" }
@@ -33,4 +35,4 @@ png.workspace = true
 base64.workspace = true
 
 [build-dependencies]
-tauri-build = "2.0"
+tauri-build = { version = "2.0", features = [] }

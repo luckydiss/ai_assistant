@@ -4,6 +4,22 @@ const invoke = (n, a) => core.invoke(n, a);
 const S = { chat: null, feeds: {}, loaded: {}, feed: [], curAi: null, curTg: null, cfg: null, autoscroll: true, modelDisplay: "Assistant" };
 let rafPending = false;
 
+/* ── toast ─────────────────────────── */
+let toastTimer = null;
+function toast(msg, isErr){
+  let t = $("#toast");
+  if (!t){
+    t = document.createElement("div");
+    t.id = "toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.toggle("err", !!isErr);
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), isErr ? 4000 : 2500);
+}
+
 /* ── markdown ───────────────────────── */
 let cbId = 0;
 function esc(s){ return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") }
@@ -49,7 +65,8 @@ function md(src){
 }
 function codeBlock(lang, body){
   const id = "cb" + (++cbId);
-  return `<div class="code"><div class="code-h"><span>${esc(lang || "code")}</span>
+  const theme = S.cfg?.chat?.code_theme || "github-dark";
+  return `<div class="code ${escAttr(theme)}"><div class="code-h"><span>${esc(lang || "code")}</span>
     <button data-cb="${id}" title="Копировать код"><svg><use href="#i-copy"/></svg></button></div>
     <pre class="${S.cfg?.chat?.code_scroll === false ? "noscroll" : ""}"><code id="${id}">${hl(body)}</code></pre></div>`;
 }
@@ -70,11 +87,7 @@ document.addEventListener("click", e => {
 /* ── модель ─────────────────────────── */
 function modelDisplay(raw){
   if (!raw) return "Assistant";
-  if (raw.includes("gemini")) return "Gemini Flash";
-  if (raw.includes("deepseek")) return "DeepSeek Flash";
-  if (raw.includes("claude")) return "Claude Analytical";
-  if (raw.includes("gpt")) return "GPT Fast";
-  return raw.length > 22 ? raw.slice(0,19) + "…" : raw;
+  return raw.length > 22 ? raw.slice(0, 19) + "…" : raw;
 }
 
 /* ── helpers ────────────────────────── */
@@ -157,22 +170,36 @@ function scheduleRender(){
   rafPending = true;
   requestAnimationFrame(() => { rafPending = false; renderFeed(); pinChipToEnd(); });
 }
-function follow(){ const f = $("#feed");
-  if (S.autoscroll) f.scrollTo({ top: f.scrollHeight, behavior: S.cfg?.chat.autoscroll_speed > 66 ? "smooth" : "auto" }); }
+function follow(){
+  const f = $("#feed");
+  if (!S.autoscroll) return;
+  const topMode = S.cfg?.chat?.order === "top";
+  f.scrollTo({ top: topMode ? 0 : f.scrollHeight,
+    behavior: (S.cfg?.chat.autoscroll_speed ?? 0) > 66 ? "smooth" : "auto" });
+}
 function pinChipToEnd(){
   const spans = document.querySelectorAll(".tg-chip span");
   const s = spans[spans.length - 1];
   if (s) s.scrollLeft = s.scrollWidth;
+}
+function patchRow(id, text){
+  if (!id) return false;
+  const s = document.querySelector(`[data-tid="${CSS.escape(String(id))}"]`);
+  if (!s) return false;
+  s.textContent = text;
+  return true;
 }
 
 /* ── события пайплайна ── */
 function ensureTg(){
   let tg = S.curTg;
   if (!tg){
-    if (S.cfg?.chat?.collapse_transcripts !== false){
+    const collapse = S.cfg?.chat?.collapse_transcripts !== false;
+    if (collapse){
       S.feed.forEach(i => { if (i.t === "tg") i.open = false; });
     }
-    tg = { t:"tg", items:[], open:false };
+    const collapseLast = S.cfg?.chat?.collapse_last !== false;
+    tg = { t:"tg", items:[], open: !collapseLast };
     S.feed.push(tg); S.curTg = tg;
   }
   return tg;
@@ -206,7 +233,7 @@ event.listen("turn", e => {
     if (last && !last.live && continuesWord(last.text, text)) last.text += text;
     else tg.items.push({ id, speaker: e.payload.speaker, text });
   }
-  renderFeed();
+  if (!patchRow(id, text)) renderFeed();
   pinChipToEnd();
 });
 event.listen("stt_partial", e => {
@@ -217,9 +244,12 @@ event.listen("stt_partial", e => {
     const tg = S.curTg || ensureTg();
     r = { id, speaker: "I", text: "", live: true };
     tg.items.push(r);
+    renderFeed();
+  } else {
+    r.text = text;
+    if (!patchRow(id, text)) scheduleRender();
   }
-  r.text = text;
-  scheduleRender(); follow();
+  follow(); pinChipToEnd();
 });
 event.listen("turn_update", e => {
   const { id, text } = e.payload;
@@ -239,8 +269,13 @@ event.listen("answer_token", e => {
   S.curAi.buf += e.payload || "";
   requestAnimationFrame(() => { if (S.curAi?.bd) { S.curAi.bd.innerHTML = md(S.curAi.buf); follow(); } });
 });
-event.listen("answer_done", () => { S.curAi = null; });
-event.listen("status", e => { if (e.payload === "generating") S.curTg = null; });
+event.listen("answer_done", () => { S.curAi = null; $("#btnStop").hidden = true; });
+event.listen("status", e => {
+  const stop = $("#btnStop");
+  if (e.payload === "generating"){ S.curTg = null; stop.hidden = false; }
+  else stop.hidden = true;
+});
+$("#btnStop").onclick = () => invoke("cancel_generation").catch(console.error);
 event.listen("error", e => {
   const b = $("#errBadge");
   if (!b) return;
@@ -251,10 +286,15 @@ event.listen("error", e => {
 });
 
 /* ── действия пользователя: логируем как quick ── */
-function act(label, fn){ finalizeLive(); S.feed.push({ t:"quick", label }); renderFeed(); fn(); }
-$("#qaSay").onclick     = () => act("Быстрое действие (Что сказать)", () => invoke("manual_trigger",{note:null}));
-$("#qaSummary").onclick = () => act("Быстрое действие (Резюме)",      () => invoke("manual_trigger",{note:"сжато перескажи суть диалога"}));
-$("#qaAnalyze").onclick = () => act("Быстрое действие (Разбор экрана)",() => invoke("screen_analyze",{windowOnly:false}));
+function act(label, note, fn){
+  finalizeLive();
+  const compact = S.cfg?.chat?.compact_quick !== false;
+  S.feed.push({ t:"quick", label: compact ? label : (note || label) });
+  renderFeed(); fn();
+}
+$("#qaSay").onclick     = () => act("Что сказать", null, () => invoke("manual_trigger",{note:null}));
+$("#qaSummary").onclick = () => act("Резюме", "сжато перескажи суть диалога", () => invoke("manual_trigger",{note:"сжато перескажи суть диалога"}));
+$("#qaAnalyze").onclick = () => act("Разбор экрана", null,() => invoke("screen_analyze",{windowOnly:false}));
 $("#btnSend").onclick   = () => { const v = $("#input").value.trim(); if (!v) return;
   finalizeLive();
   $("#input").value = ""; S.feed.push({ t:"user", text:v }); renderFeed(); invoke("manual_trigger",{note:v}); };
@@ -287,11 +327,19 @@ $("#btnMute").onclick = async () => {
   m.style.color = muted ? "var(--err)" : "";
   await invoke("mic_mute", { muted });
 };
-$("#btnShotRegion").onclick = () => act("Скриншот области", () => invoke("screen_analyze",{windowOnly:true}));
-$("#btnShotFull").onclick  = () => act("Скриншот экрана",  () => invoke("screen_analyze",{windowOnly:false}));
+$("#btnShotRegion").onclick = () => act("Скриншот области", null, () => invoke("screen_analyze",{windowOnly:true}));
+$("#btnShotFull").onclick  = () => act("Скриншот экрана", null,  () => invoke("screen_analyze",{windowOnly:false}));
 $("#btnReset").onclick = () => { S.feed = []; S.curAi = S.curTg = null; renderFeed(); invoke("ctx_reset"); };
 $("#btnHome").onclick = () => invoke("go_home");
-$("#fabDown").onclick = () => { S.autoscroll = true; follow(); };
+const feedEl = $("#feed");
+const fabDown = $("#fabDown");
+feedEl.addEventListener("scroll", () => {
+  const atBottom = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 24;
+  S.autoscroll = atBottom;
+  fabDown.hidden = atBottom;
+});
+fabDown.onclick = () => { S.autoscroll = true; follow(); };
+fabDown.hidden = true;
 
 /* --- pane: STT --- */
 async function fillSttPane(){
@@ -328,15 +376,21 @@ $("#btnNotes").onclick = e => { e.stopPropagation();
   document.querySelectorAll(".pane").forEach(x => { if (x !== p) x.hidden = true; });
   invoke("notes_list").then(list => {
     const c = $("#notesList"); c.innerHTML = "";
+    if (!list.length){
+      const d = el("div","item empty-item"); d.textContent = "Заметок пока нет";
+      c.appendChild(d);
+    }
     list.forEach(n => { const d = el("button","item"); d.textContent = n.name;
       d.onclick = async () => { const full = await invoke("note_get",{ id: n.id });
         $("#noteText").textContent = full.text; $("#notePane").hidden = false; };
       c.appendChild(d); });
-    const all = el("button","item"); all.textContent = "Показать все";
-    all.onclick = async () => { const list2 = await invoke("notes_list");
-      const texts = (await Promise.all(list2.map(n => invoke("note_get",{ id: n.id })))).map(n => n.text).join("\n\n");
-      $("#noteText").textContent = texts; $("#notePane").hidden = false; };
-    c.appendChild(all);
+    if (list.length > 1){
+      const all = el("button","item"); all.textContent = "Показать все";
+      all.onclick = async () => { const list2 = await invoke("notes_list");
+        const texts = (await Promise.all(list2.map(n => invoke("note_get",{ id: n.id })))).map(n => n.text).join("\n\n");
+        $("#noteText").textContent = texts; $("#notePane").hidden = false; };
+      c.appendChild(all);
+    }
   }).catch(console.error);
   p.hidden = !p.hidden;
 };
@@ -347,17 +401,139 @@ $("#ddContext").onclick = async e => { e.stopPropagation();
   const r = $("#ddContext").getBoundingClientRect(); const p = $("#paneCtx");
   p.style.top = (r.bottom + 6) + "px"; p.style.left = r.left + "px";
   document.querySelectorAll(".pane").forEach(x => { if (x !== p) x.hidden = true; });
-  const list = await invoke("contexts_list").catch(() => []);
+  const [list, cur] = await Promise.all([
+    invoke("contexts_list").catch(() => []),
+    invoke("context_current").catch(() => ""),
+  ]);
   const c = $("#ctxList"); c.innerHTML = "";
-  list.forEach(ctx => { const d = el("button","item"); d.textContent = ctx.name;
-    d.onclick = () => { $("#ctxName").textContent = ctx.name; p.hidden = true; };
-    c.appendChild(d); });
+  const mk = (id, name) => { const d = el("button","item" + (id === cur ? " on" : ""));
+    d.textContent = name;
+    d.onclick = async () => {
+      try {
+        await invoke("context_apply", { id });
+        $("#ctxName").textContent = id ? name : "Контекст";
+        toast(id ? "Контекст: " + name : "Контекст отключён");
+        p.hidden = true;
+      } catch (err) { toast(String(err), true); }
+    };
+    c.appendChild(d);
+  };
+  mk("", "— без контекста —");
+  list.forEach(ctx => mk(ctx.id, ctx.name));
+  if (!list.length){
+    const d = el("div","item empty-item"); d.textContent = "Контекстов нет (создайте в настройках)";
+    c.appendChild(d);
+  }
   p.hidden = !p.hidden;
 };
 
 /* --- pane: функции ИИ --- */
 $("#tglSearch").onchange   = e => invoke("search_set",{ on: e.target.checked }).catch(console.error);
 $("#tglNotesRag").onchange = e => invoke("notes_rag_set",{ on: e.target.checked }).catch(console.error);
+
+/* --- pane: выбор модели ── */
+const EFFORTS = [null, "minimal", "low", "medium", "high"];
+const EFFORT_LABELS = ["Выключен", "Минимальный", "Низкий", "Средний", "Максимальный"];
+// models_list теперь отдаёт объекты ModelMetadata:
+// {id, name, family, context_length, pricing:{input_per_1m,output_per_1m}, capabilities}
+let mmAll = [], mmSelected = "", mmFam = "__all", mmGroups = {};
+
+function effortIndex(e){ const i = EFFORTS.indexOf(e ?? null); return i < 0 ? 0 : i; }
+function updateReasonLabel(){
+  $("#mmReasonVal").textContent = EFFORT_LABELS[Number($("#mmRange").value)];
+}
+function fmtCtx(n){
+  if (!n) return "";
+  return n >= 1000 ? Math.round(n / 1000) + "k" : String(n);
+}
+function fmtPrice(p){
+  if (!p || p <= 0) return "";
+  const v = p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(2) : p.toFixed(3);
+  return "$" + parseFloat(v);
+}
+function metaBadges(m){
+  const out = [];
+  const ctx = fmtCtx(m.context_length);
+  if (ctx) out.push('<span class="mm-b">' + ctx + "</span>");
+  const pi = fmtPrice(m.pricing && m.pricing.input_per_1m);
+  const po = fmtPrice(m.pricing && m.pricing.output_per_1m);
+  if (pi || po) out.push('<span class="mm-b">' + esc((pi || "?") + "/" + (po || "?")) + "</span>");
+  if (m.capabilities && m.capabilities.vision) out.push('<span class="mm-b">vision</span>');
+  if (m.capabilities && m.capabilities.tools) out.push('<span class="mm-b">tools</span>');
+  if (m.capabilities && m.capabilities.reasoning) out.push('<span class="mm-b">reasoning</span>');
+  return out.join("");
+}
+function renderProviders(){
+  const p = $("#mmProviders"); p.innerHTML = "";
+  // Только семейства из метаданных models_list — без «хоста» и без __all.
+  const fams = Object.keys(mmGroups).sort();
+  if (!fams.length) return;
+  if (!mmGroups[mmFam]) mmFam = fams[0];
+  fams.forEach((f, i) => {
+    const b = el("button", "mm-prov" + (mmFam === f ? " on" : ""));
+    b.innerHTML = '<span class="dot dot-f' + (i % 8) + '"></span><span>' + esc(f) + "</span>";
+    b.onclick = () => { mmFam = f; renderProviders(); renderModels(); };
+    p.appendChild(b);
+  });
+}
+function renderModels(){
+  const list = $("#mmModels"); list.innerHTML = "";
+  const arr = mmFam === "__all"
+    ? [...mmAll].sort((a, b) => a.id.localeCompare(b.id))
+    : (mmGroups[mmFam] || []).sort((a, b) => a.id.localeCompare(b.id));
+  if (!arr.length){ list.innerHTML = '<div class="empty-note">Нет моделей</div>'; return; }
+  arr.forEach(m => {
+    const b = el("button", "mm-model" + (m.id === mmSelected ? " on" : ""));
+    b.innerHTML = '<div class="info"><div class="name">' + esc(m.name || m.id) +
+      '</div><div class="id">' + esc(m.id) + '</div><div class="badges">' +
+      metaBadges(m) + '</div></div>' +
+      (m.id === mmSelected ? '<span class="chk">✓</span>' : "");
+    b.onclick = async () => {
+      const eff = EFFORTS[Number($("#mmRange").value)] ?? null;
+      try {
+        await invoke("llm_set", { model: m.id, effort: eff });
+        mmSelected = m.id;
+        $("#modelName").textContent = modelDisplay(m.name || m.id);
+        renderModels();
+      } catch (e) { toast(String(e), true); }
+    };
+    list.appendChild(b);
+  });
+}
+async function openModelModal(){
+  $("#modelModal").hidden = false;
+  const prov = $("#mmProviders"), list = $("#mmModels");
+  prov.innerHTML = ""; list.innerHTML = '<div class="empty-note">Загрузка…</div>';
+  let cfg = {};
+  try {
+    [mmAll, cfg] = await Promise.all([invoke("models_list"), invoke("get_config")]);
+  } catch (e) {
+    list.innerHTML = '<div class="empty-note">Ошибка: ' + esc(String(e)) + "</div>";
+    return;
+  }
+  if (!Array.isArray(mmAll)) mmAll = [];
+  mmSelected = (cfg.llm && cfg.llm.model) || "";
+  mmGroups = {};
+  mmAll.forEach(m => { (mmGroups[m.family] ||= []).push(m); });
+  mmFam = mmSelectedFamily();
+  renderProviders();
+  renderModels();
+  $("#mmRange").value = effortIndex(cfg.llm ? cfg.llm.reasoning_effort : null);
+  updateReasonLabel();
+}
+function mmSelectedFamily(){
+  const f = mmAll.find(m => m.id === mmSelected)?.family;
+  return (f && mmGroups[f]) ? f : Object.keys(mmGroups).sort()[0] || "__all";
+}
+$("#ddModel").onclick = e => { e.stopPropagation(); openModelModal(); };
+$("#mmClose").onclick = () => { $("#modelModal").hidden = true; };
+$("#modelModal").onclick = e => { if (e.target.id === "modelModal") $("#modelModal").hidden = true; };
+$("#mmRange").oninput = updateReasonLabel;
+$("#mmRange").onchange = async () => {
+  const eff = EFFORTS[Number($("#mmRange").value)] ?? null;
+  try { await invoke("llm_set", { model: mmSelected, effort: eff }); }
+  catch (e) { toast(String(e), true); }
+};
 
 /* ── init ── */
 (async () => {
@@ -393,7 +569,9 @@ $("#tglNotesRag").onchange = e => invoke("notes_rag_set",{ on: e.target.checked 
   bindDd("#btnAi","#paneAi");
   S.auto = (await invoke("auto_answers_get").catch(() => false));
   S.tts = (await invoke("tts_auto_get").catch(() => false));
-  S.rail = true;
+  S.rail = ui.rail !== false;
+  S.autoscroll = chat.autoscroll !== false;
+  $("#feed").classList.toggle("top", chat.order === "top");
   $("#btnAuto")._up(); $("#btnTts")._up(); $("#btnChats")._up();
   fillSttPane();
   refreshChats();
@@ -426,9 +604,9 @@ async function setChat(id){
         const items = [];
         let tg = null;
         for (const m of msgs) {
-          if (m.speaker === "I" || m.speaker === "C") {
+          if (m.speaker === "I") {
             if (!tg) { tg = { t:"tg", items:[], open:false }; items.push(tg); }
-            tg.items.push({ speaker: m.speaker, text: m.text });
+            tg.items.push({ speaker: "I", text: m.text });
           } else {
             tg = null;
             items.push(m.speaker === "user"

@@ -76,6 +76,7 @@ impl Assembler {
                     start_time: transcript.start_time,
                     end_time: transcript.start_time
                         + Duration::milliseconds(transcript.duration_ms as i64),
+                    typed: false,
                 };
                 if self.is_echo_drop(&candidate) {
                     tracing::debug!(text = %transcript.text, "Filtered cross-lane echo");
@@ -108,6 +109,7 @@ impl Assembler {
                 start_time: transcript.start_time,
                 end_time: transcript.start_time
                     + Duration::milliseconds(transcript.duration_ms as i64),
+                typed: false,
             };
 
             self.turns.insert(idx, turn.clone());

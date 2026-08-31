@@ -24,18 +24,24 @@ fn turns() -> Vec<Turn> {
             text: "просите посчитать буквы в слове Moje".into(),
             start_time: now,
             end_time: now,
+        
+            typed: false,
         },
         Turn {
             speaker: Speaker::Candidate,
             text: "просите посчитать буквы".into(),
             start_time: now,
             end_time: now,
+        
+            typed: false,
         },
         Turn {
             speaker: Speaker::Candidate,
             text: "мне нужна помощь".into(),
             start_time: now,
             end_time: now,
+        
+            typed: false,
         },
     ]
 }
@@ -60,14 +66,16 @@ async fn main() -> anyhow::Result<()> {
 
     let mut answered = 0usize;
     for run in 0..n {
-        let messages = ctx.build(
-            "",
-            &turns(),
-            Some(&turns()[0]),
-            false,
-            Some("помоги сформулировать"),
-            None,
-        );
+        let messages = ctx.build(&engine_context::ContextInput {
+            summary: "",
+            key_turns: &[],
+            recent: &turns(),
+            focus: Some(&turns()[0]),
+            focus_live: false,
+            note: Some("помоги сформулировать"),
+            image_b64: None,
+            manual: true,
+        });
         let (mut rx, handle) = llm.stream_answer(messages);
         let result = timeout(Duration::from_secs(90), async {
             let mut full = String::new();

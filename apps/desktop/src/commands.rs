@@ -1,6 +1,7 @@
 use crate::pipeline::{start as pipeline_start, stop as pipeline_stop, AppServices};
 use engine_config::{ChatSection, UiSection};
 use engine_dialogue::{Speaker, Turn};
+use engine_models::ModelMetadata;
 use engine_store::{ChatRow, ContextRow, MeetingRow, NoteRow, SessionStore};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -11,24 +12,166 @@ use tokio::sync::Mutex;
 type Store = Arc<Mutex<SessionStore>>;
 type Services = Arc<AppServices>;
 
+/// Каталог чат-моделей активного провайдера (capabilities-driven фильтрация
+/// внутри engine-models, change 030).
+#[tauri::command]
+pub async fn models_list(cfg: State<'_, ConfigState>) -> Result<Vec<ModelMetadata>, String> {
+    let provider = {
+        let c = cfg.read().map_err(|e| e.to_string())?;
+        c.get_provider().map_err(|e| e.to_string())?
+    };
+    use engine_models::ModelProvider;
+    let all = provider.list_models().await.map_err(|e| e.to_string())?;
+    Ok(all.into_iter().filter(|m| m.is_chat()).collect())
+}
+
+/// Сменить модель и уровень рассуждений (живо, с сохранением в config.toml).
+/// Модель валидируется по каталогу провайдера до переключения живого клиента.
+#[tauri::command]
+pub async fn llm_set(
+    services: State<'_, Services>,
+    cfg: State<'_, ConfigState>,
+    model: String,
+    effort: Option<String>,
+) -> Result<(), String> {
+    let provider = {
+        let c = cfg.read().map_err(|e| e.to_string())?;
+        c.get_provider().map_err(|e| e.to_string())?
+    };
+    use engine_models::ModelProvider;
+    provider.validate_model(&model).await.map_err(|e| e.to_string())?;
+    {
+        let mut guard = cfg.write().map_err(|e| e.to_string())?;
+        guard.llm.model = model.clone();
+        guard.llm.reasoning_effort = effort.clone();
+        // Реестр провайдеров тоже сохраняем (после нормализации при старте).
+        let out = guard.clone();
+        drop(guard);
+        out.save("config.toml").map_err(|e| e.to_string())?;
+    }
+    services.orch.set_llm(model, effort);
+    Ok(())
+}
+
+/// Горячие промпты: пересобрать ContextBuilder из текущего конфига + контекста
+/// встречи и отправить в оркестратор. meeting_id=None → активная встреча.
+pub(crate) async fn sync_ctx_builder(
+    app: &AppHandle,
+    services: &Arc<AppServices>,
+    meeting_id: Option<String>,
+) {
+    let Some(cfg) = cfg_of(app) else { return };
+    let mid = match meeting_id {
+        Some(m) => Some(m),
+        None => services.active_meeting.lock().await.clone(),
+    };
+    let store = services.store.lock().await;
+    let meeting = mid.as_deref().and_then(|mid| {
+        store
+            .list_meetings()
+            .ok()
+            .and_then(|ms| ms.into_iter().find(|m| m.id == mid))
+    });
+    let ws = meeting
+        .as_ref()
+        .and_then(|m| m.context_id.clone())
+        .and_then(|cid| store.get_context(&cid).ok())
+        .map(|c| engine_context::PromptContext {
+            base_system: String::new(),
+            role: if c.languages.is_empty() {
+                c.role.clone()
+            } else {
+                format!("{} ({})", c.role, c.languages.join(", "))
+            },
+            extra_prompt: c.extra_prompt.clone(),
+            resume_text: c.resume_text.clone(),
+            vacancy: meeting
+                .as_ref()
+                .map(|m| m.vacancy.clone())
+                .unwrap_or_default(),
+        });
+    let builder = match &ws {
+        // Промпт контекста задан → он ЗАМЕНЯЕТ основной system-промпт
+        // (и для авто, и для ручных запросов).
+        Some(ws) if !ws.extra_prompt.trim().is_empty() => {
+            let mut persona = ws.role.clone();
+            if !ws.resume_text.is_empty() {
+                persona.push_str(&format!("\nРезюме кандидата: {}", ws.resume_text));
+            }
+            if !ws.vacancy.is_empty() {
+                persona.push_str(&format!("\nВакансия: {}", ws.vacancy));
+            }
+            engine_context::ContextBuilder::new(ws.extra_prompt.clone(), persona, 8000)
+                .with_manual_system(ws.extra_prompt.clone())
+        }
+        Some(ws) => {
+            engine_context::ContextBuilder::with_workspace(cfg.prompts.system.clone(), ws, 8000)
+                .with_manual_system(cfg.prompts.manual_system.clone())
+        }
+        None => engine_context::ContextBuilder::new(
+            cfg.prompts.system.clone(),
+            cfg.prompts.persona.clone(),
+            8000,
+        )
+        .with_manual_system(cfg.prompts.manual_system.clone()),
+    };
+    {
+        let probe = builder.build(&engine_context::ContextInput::new(&[]));
+        let sys = match probe.first() {
+            Some(m) => match &m.content {
+                engine_context::MessageContent::Text(t) => t.clone(),
+                _ => String::new(),
+            },
+            None => String::new(),
+        };
+        tracing::info!(
+            "sync_ctx_builder: mid={:?} role={:?} extra_len={} sys_head={:?}",
+            mid,
+            ws.as_ref().map(|w| &w.role),
+            ws.as_ref().map(|w| w.extra_prompt.len()).unwrap_or(0),
+            sys.chars().take(80).collect::<String>()
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("ctx_debug.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(
+                    f,
+                    "mid={:?} role={:?} extra_len={} sys_head={:?}",
+                    mid,
+                    ws.as_ref().map(|w| &w.role),
+                    ws.as_ref().map(|w| w.extra_prompt.len()).unwrap_or(0),
+                    sys.chars().take(120).collect::<String>()
+                )
+            });
+    }
+    services.orch.set_ctx(builder);
+}
+
 #[tauri::command]
 pub async fn manual_trigger(
+    app: AppHandle,
     services: State<'_, Services>,
     note: Option<String>,
 ) -> Result<(), String> {
+    sync_ctx_builder(&app, &services, None).await;
     services.orch.manual(note, None);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn screen_analyze(
+    app: AppHandle,
     services: State<'_, Services>,
     window_only: bool,
 ) -> Result<(), String> {
-    screen_analyze_inner(&services, window_only).await
+    screen_analyze_inner(app, &services, window_only).await
 }
 
 pub(crate) async fn screen_analyze_inner(
+    app: AppHandle,
     services: &Arc<AppServices>,
     window_only: bool,
 ) -> Result<(), String> {
@@ -44,6 +187,7 @@ pub(crate) async fn screen_analyze_inner(
     let png = encode_png(&rgba).map_err(|e| e.to_string())?;
     tracing::info!("screen_analyze: png {} bytes", png.len());
     let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+    sync_ctx_builder(&app, services, None).await;
     services.orch.manual(
         Some("Проанализируй скриншот и помоги с задачей на экране".into()),
         Some(b64),
@@ -59,15 +203,38 @@ pub async fn meetings_list(state: State<'_, Store>) -> Result<Vec<MeetingRow>, S
 
 #[tauri::command]
 pub async fn meeting_create(
+    app: AppHandle,
+    services: State<'_, Services>,
     state: State<'_, Store>,
     name: String,
     vacancy: String,
 ) -> Result<String, String> {
-    state
+    let id = state
         .lock()
         .await
         .create_meeting(&name, &vacancy)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Новая встреча наследует последний использованный контекст.
+    let last_ctx = {
+        let store = state.lock().await;
+        store
+            .list_meetings()
+            .ok()
+            .and_then(|ms| {
+                ms.into_iter()
+                    .find(|m| m.context_id.as_deref().is_some_and(|c| !c.is_empty()))
+            })
+            .and_then(|m| m.context_id)
+    };
+    if let Some(cid) = last_ctx {
+        state
+            .lock()
+            .await
+            .set_meeting_context(&id, &cid)
+            .map_err(|e| e.to_string())?;
+    }
+    sync_ctx_builder(&app, &services, Some(id.clone())).await;
+    Ok(id)
 }
 
 #[tauri::command]
@@ -149,10 +316,10 @@ pub async fn start_pipeline(
             let turns: Vec<Turn> = msgs
                 .iter()
                 .filter_map(|m| {
-                    let speaker = if m.speaker == "I" {
-                        Speaker::Interviewer
-                    } else {
-                        Speaker::Candidate
+                    let (speaker, typed) = match m.speaker.as_str() {
+                        "I" => (Speaker::Interviewer, false),
+                        "user" => (Speaker::Interviewer, true),
+                        _ => (Speaker::Candidate, false),
                     };
                     let at = chrono::DateTime::parse_from_rfc3339(&m.at)
                         .ok()?
@@ -162,6 +329,7 @@ pub async fn start_pipeline(
                         text: m.text.clone(),
                         start_time: at,
                         end_time: at,
+                        typed,
                     })
                 })
                 .collect();
@@ -169,6 +337,8 @@ pub async fn start_pipeline(
         }
         services.orch.set_active_chat(chat_id);
     }
+    // Горячие промпты + персона встречи (роль/резюме/вакансия перекрывают config.toml).
+    sync_ctx_builder(&app, &services, Some(meeting_id.clone())).await;
     let handle = pipeline_start(app.clone(), services.store.clone(), meeting_id.clone())
         .await
         .map_err(|e| e.to_string())?;
@@ -244,7 +414,7 @@ pub async fn protection_set(
     cfg: State<'_, ConfigState>,
     on: bool,
 ) -> Result<(), String> {
-    for name in ["overlay", "indicator", "main"] {
+    for name in ["overlay", "main"] {
         if let Some(win) = app.get_webview_window(name) {
             let res = if on {
                 crate::stealth::apply_affinity(&win)
@@ -328,6 +498,141 @@ pub async fn hotkeys_get(cfg: State<'_, ConfigState>) -> Result<engine_config::H
 #[tauri::command]
 pub async fn get_config(cfg: State<'_, ConfigState>) -> Result<engine_config::Config, String> {
     Ok(cfg.read().map_err(|e| e.to_string())?.clone())
+}
+
+#[tauri::command]
+pub async fn cancel_generation(
+    services: State<'_, Services>,
+    cfg: State<'_, ConfigState>,
+) -> Result<(), String> {
+    let keep = cfg.read().map_err(|e| e.to_string())?.chat.cancel_mode == "keep";
+    services.orch.cancel(keep);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn config_set(
+    app: AppHandle,
+    services: State<'_, Services>,
+    cfg: State<'_, ConfigState>,
+    section: String,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let out = {
+    let mut guard = cfg.write().map_err(|e| e.to_string())?;
+        match (section.as_str(), key.as_str()) {
+            ("chat", "order") => guard.chat.order = value.as_str().ok_or("expected string")?.into(),
+        ("chat", "font_size") => {
+            guard.chat.font_size = value.as_f64().ok_or("expected number")? as f32;
+        }
+        ("chat", "code_theme") => {
+            guard.chat.code_theme = value.as_str().ok_or("expected string")?.into();
+        }
+        ("chat", "code_scroll") => {
+            guard.chat.code_scroll = value.as_bool().ok_or("expected bool")?;
+        }
+        ("chat", "autoscroll") => {
+            guard.chat.autoscroll = value.as_bool().ok_or("expected bool")?;
+        }
+        ("chat", "autoscroll_speed") => {
+            guard.chat.autoscroll_speed = value.as_u64().ok_or("expected number")? as u8;
+        }
+        ("chat", "collapse_transcripts") => {
+            guard.chat.collapse_transcripts = value.as_bool().ok_or("expected bool")?;
+        }
+        ("chat", "collapse_operations") => {
+            guard.chat.collapse_operations = value.as_bool().ok_or("expected bool")?;
+        }
+        ("chat", "collapse_last") => {
+            guard.chat.collapse_last = value.as_bool().ok_or("expected bool")?;
+        }
+        ("chat", "compact_quick") => {
+            guard.chat.compact_quick = value.as_bool().ok_or("expected bool")?;
+        }
+        ("chat", "cancel_on_resend") => {
+            guard.chat.cancel_on_resend = value.as_bool().ok_or("expected bool")?;
+            services
+                .orch
+                .set_cancel_policy(guard.chat.cancel_on_resend, guard.chat.cancel_mode == "keep");
+        }
+        ("chat", "cancel_mode") => {
+            let m = value.as_str().ok_or("expected string")?;
+            if !matches!(m, "drop" | "keep") {
+                return Err(format!("invalid cancel_mode: {m}"));
+            }
+            guard.chat.cancel_mode = m.into();
+            services
+                .orch
+                .set_cancel_policy(guard.chat.cancel_on_resend, m == "keep");
+        }
+        ("ui", "accent") => {
+            guard.ui.accent = value.as_str().ok_or("expected string")?.into();
+        }        ("ui", "opacity") => {
+            guard.ui.opacity = value.as_u64().ok_or("expected number")? as u8;
+        }
+        ("ui", "indicator_corner") => {
+            guard.ui.indicator_corner = value.as_str().ok_or("expected string")?.into();
+        }
+        ("ui", "rail") => {
+            let on = value.as_bool().ok_or("expected bool")?;
+            guard.ui.rail = on;
+            services.rail_visible.store(on, std::sync::atomic::Ordering::SeqCst);
+        }
+        ("window", "move_step") => {
+            guard.window.move_step = value.as_u64().ok_or("expected number")? as u32;
+        }
+        ("window", "resize_step") => {
+            guard.window.resize_step = value.as_u64().ok_or("expected number")? as u32;
+        }
+        _ => return Err(format!("unknown config key: {section}.{key}")),
+        }
+        guard
+            .validate()
+            .map_err(|e| format!("{e} (изменение не сохранено)"))?;
+        guard.clone()
+    };
+    out.save("config.toml").map_err(|e| e.to_string())?;
+    emit_indicator(&app, &services, &out);
+    if section == "prompts" {
+        sync_ctx_builder(&app, &services, None).await;
+    }
+    Ok(())
+}
+
+/// Применить контекст к активной встрече (из выпадашки «Контекст» оверлея).
+#[tauri::command]
+pub async fn context_apply(
+    app: AppHandle,
+    services: State<'_, Services>,
+    state: State<'_, Store>,
+    id: String,
+) -> Result<(), String> {
+    let mid = services.active_meeting.lock().await.clone();
+    if let Some(mid) = &mid {
+        state
+            .lock()
+            .await
+            .set_meeting_context(mid, &id)
+            .map_err(|e| e.to_string())?;
+    }
+    sync_ctx_builder(&app, &services, mid).await;
+    Ok(())
+}
+
+/// context_id активной встречи (для отметки в выпадашке).
+#[tauri::command]
+pub async fn context_current(services: State<'_, Services>) -> Result<String, String> {
+    let mid = services.active_meeting.lock().await.clone();
+    let Some(mid) = mid else { return Ok(String::new()) };
+    let store = services.store.lock().await;
+    let ctx_id = store
+        .list_meetings()
+        .ok()
+        .and_then(|ms| ms.into_iter().find(|m| m.id == mid))
+        .and_then(|m| m.context_id)
+        .unwrap_or_default();
+    Ok(ctx_id)
 }
 
 #[tauri::command]
@@ -434,11 +739,17 @@ pub async fn tts_auto_get(cfg: State<'_, ConfigState>) -> Result<bool, String> {
 #[tauri::command]
 pub async fn ui_set(
     services: State<'_, Services>,
+    cfg: State<'_, ConfigState>,
     key: String,
     value: bool,
 ) -> Result<(), String> {
     if key == "rail" {
         services.rail_visible.store(value, Ordering::SeqCst);
+        let mut guard = cfg.write().map_err(|e| e.to_string())?;
+        guard.ui.rail = value;
+        let out = guard.clone();
+        drop(guard);
+        out.save("config.toml").map_err(|e| e.to_string())?;
     }
     Ok(())
 }

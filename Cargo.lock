@@ -82,6 +82,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "async-trait"
+version = "0.1.92"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "atk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -745,6 +756,7 @@ dependencies = [
  "engine-context",
  "engine-dialogue",
  "engine-llm",
+ "engine-models",
  "engine-orchestrator",
  "engine-rtstt",
  "engine-store",
@@ -753,6 +765,7 @@ dependencies = [
  "engine-vad",
  "png 0.17.16",
  "raw-window-handle",
+ "reqwest 0.11.27",
  "serde",
  "serde_json",
  "tauri",
@@ -962,6 +975,7 @@ dependencies = [
 name = "engine-config"
 version = "0.1.0"
 dependencies = [
+ "engine-models",
  "notify",
  "serde",
  "thiserror 1.0.69",
@@ -1012,6 +1026,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "engine-context",
+ "engine-models",
  "futures",
  "reqwest 0.11.27",
  "serde",
@@ -1020,6 +1035,19 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "engine-models"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

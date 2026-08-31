@@ -12,3 +12,4 @@ toml = "0.8"
 notify.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+engine-models = { path = "../engine-models" }

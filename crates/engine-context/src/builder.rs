@@ -39,6 +39,7 @@ pub struct ChatMessage {
 
 pub struct ContextBuilder {
     system: String,
+    manual_system: String,
     persona: String,
     max_tokens: usize,
 }
@@ -52,13 +53,49 @@ pub struct PromptContext {
     pub vacancy: String,
 }
 
+/// Структурированный вход контекста: трёхслойная память + фокус + заметка.
+pub struct ContextInput<'a> {
+    pub summary: &'a str,
+    pub key_turns: &'a [Turn],
+    pub recent: &'a [Turn],
+    pub focus: Option<&'a Turn>,
+    /// focus — живой partial (интервьюер ещё говорит).
+    pub focus_live: bool,
+    pub note: Option<&'a str>,
+    pub image_b64: Option<&'a str>,
+    /// Ручной запрос (хоткей/текст/скриншот) — использовать manual_system.
+    pub manual: bool,
+}
+
+impl<'a> ContextInput<'a> {
+    pub fn new(recent: &'a [Turn]) -> Self {
+        Self {
+            summary: "",
+            key_turns: &[],
+            recent,
+            focus: None,
+            focus_live: false,
+            note: None,
+            image_b64: None,
+            manual: false,
+        }
+    }
+}
+
 impl ContextBuilder {
     pub fn new(system: String, persona: String, max_tokens: usize) -> Self {
         Self {
             system,
+            manual_system: String::new(),
             persona,
             max_tokens,
         }
+    }
+
+    /// Отдельный системный промпт для ручных запросов (пусто → system).
+    pub fn with_manual_system(mut self, manual_system: String) -> Self {
+        self.manual_system = manual_system;
+        self
     }
 
     pub fn with_workspace(base_system: String, ws: &PromptContext, max_tokens: usize) -> Self {
@@ -75,27 +112,25 @@ impl ContextBuilder {
         }
         Self {
             system,
+            manual_system: String::new(),
             persona,
             max_tokens,
         }
     }
 
-    pub fn build(
-        &self,
-        summary: &str,
-        turns: &[Turn],
-        focus: Option<&Turn>,
-        focus_live: bool,
-        note: Option<&str>,
-        image_b64: Option<&str>,
-    ) -> Vec<ChatMessage> {
-        let system = format!("{}\n\nPersona кандидата: {}", self.system, self.persona);
-        let mut kept = turns.to_vec();
+    pub fn build(&self, inp: &ContextInput) -> Vec<ChatMessage> {
+        let base = if inp.manual && !self.manual_system.is_empty() {
+            &self.manual_system
+        } else {
+            &self.system
+        };
+        let system = format!("{}\n\nPersona кандидата: {}", base, self.persona);
+        let mut recent: Vec<Turn> = inp.recent.to_vec();
 
         loop {
-            let user = self.user_content(summary, &kept, focus, focus_live, note);
+            let user = self.user_content(inp, &recent);
             let total = crate::estimate_tokens(&system) + crate::estimate_tokens(&user);
-            if total <= self.max_tokens || kept.is_empty() {
+            if total <= self.max_tokens || recent.is_empty() {
                 return vec![
                     ChatMessage {
                         role: Role::System,
@@ -103,11 +138,11 @@ impl ContextBuilder {
                     },
                     ChatMessage {
                         role: Role::User,
-                        content: self.user_content_message(user, image_b64),
+                        content: self.user_content_message(user, inp.image_b64),
                     },
                 ];
             }
-            kept.remove(0);
+            recent.remove(0); // страховка бюджета: усекать старейшие recent
         }
     }
 
@@ -131,31 +166,33 @@ impl ContextBuilder {
         }
     }
 
-    fn user_content(
-        &self,
-        summary: &str,
-        turns: &[Turn],
-        focus: Option<&Turn>,
-        focus_live: bool,
-        note: Option<&str>,
-    ) -> String {
+    fn tag(t: &Turn) -> &'static str {
+        match t.speaker {
+            Speaker::Interviewer => "I",
+            Speaker::Candidate => "C",
+        }
+    }
+
+    fn user_content(&self, inp: &ContextInput, recent: &[Turn]) -> String {
         let mut s = String::new();
-        if !summary.is_empty() {
-            s.push_str(&format!("Раньше: {}\n", summary));
+        if !inp.summary.is_empty() {
+            s.push_str(&format!("Резюме всей сессии: {}\n", inp.summary));
         }
-        s.push_str("Диалог:\n");
-        for t in turns {
-            let tag = match t.speaker {
-                Speaker::Interviewer => "I",
-                Speaker::Candidate => "C",
-            };
-            s.push_str(&format!("{}: {}\n", tag, t.text));
+        if !inp.key_turns.is_empty() {
+            s.push_str("Ключевые моменты:\n");
+            for t in inp.key_turns {
+                s.push_str(&format!("{}: {}\n", Self::tag(t), t.text));
+            }
         }
-        if let Some(f) = focus {
-            let live = if focus_live { " (ещё говорит)" } else { "" };
+        s.push_str("Недавние реплики:\n");
+        for t in recent {
+            s.push_str(&format!("{}: {}\n", Self::tag(t), t.text));
+        }
+        if let Some(f) = inp.focus {
+            let live = if inp.focus_live { " (ещё говорит)" } else { "" };
             s.push_str(&format!("Последний вопрос I{live}: «{}»\n", f.text));
         }
-        if let Some(n) = note {
+        if let Some(n) = inp.note {
             s.push_str(&format!("Комментарий пользователя: {}\n", n));
         }
         s.push_str("Ответь по запросу кандидата.");

@@ -103,3 +103,62 @@ pub async fn spawn_mock_sse_capture(
 
     (format!("http://{}", addr), count)
 }
+
+/// Mock для 028: нестриминговые запросы (суммаризация, без ключа "stream")
+/// получают JSON-ответ `json_content`; стриминговые — SSE `sse_body`.
+pub async fn spawn_mock_auto(
+    sse_body: String,
+    json_content: String,
+    body_out: Arc<Mutex<String>>,
+) -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    let c2 = count.clone();
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let c2 = c2.clone();
+            let sse = sse_body.clone();
+            let json_content = json_content.clone();
+            let body_out = body_out.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 65536];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                if let Some(idx) = req.find("\r\n\r\n") {
+                    let payload = req[idx + 4..].trim().to_string();
+                    if let Ok(mut guard) = body_out.lock() {
+                        *guard = payload;
+                    }
+                }
+                c2.fetch_add(1, Ordering::SeqCst);
+                let is_stream = req.contains("\"stream\"");
+                let (ctype, body) = if is_stream {
+                    ("text/event-stream", sse)
+                } else {
+                    (
+                        "application/json",
+                        format!(
+                            "{{\"choices\":[{{\"message\":{{\"content\":\"{}\"}}}}]}}",
+                            json_content.replace('"', "\\\"")
+                        ),
+                    )
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
+                    ctype,
+                    body.len()
+                );
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(body.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+
+    (format!("http://{}", addr), count)
+}

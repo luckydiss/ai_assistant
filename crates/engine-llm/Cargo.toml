@@ -13,6 +13,7 @@ reqwest.workspace = true
 tokio.workspace = true
 futures.workspace = true
 engine-context = { path = "../engine-context" }
+engine-models = { path = "../engine-models" }
 
 [dev-dependencies]
 anyhow.workspace = true

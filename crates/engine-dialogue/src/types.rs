@@ -46,6 +46,9 @@ pub struct Turn {
     pub text: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
+    /// Сообщение введено пользователем вручную (не распознано из аудио).
+    #[serde(default)]
+    pub typed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

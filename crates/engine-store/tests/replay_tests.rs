@@ -77,18 +77,24 @@ fn replay_simulates_triggers() {
         text: "короткая".into(),
         start_time: now,
         end_time: now,
+    
+    typed: false,
     };
     let long_no_q = engine_dialogue::Turn {
         speaker: Speaker::Interviewer,
         text: "очень длинная реплика без вопроса которая занимает много слов".into(),
         start_time: now,
         end_time: now,
+    
+    typed: false,
     };
     let long_q = engine_dialogue::Turn {
         speaker: Speaker::Interviewer,
         text: "это очень длинный вопрос который содержит знак вопроса внутри текста и требует развернутого объяснения по существу дела?".into(),
         start_time: now,
         end_time: now,
+    
+    typed: false,
     };
 
     assert!(trigger_decision(&short, 4, 600).is_none());
@@ -114,12 +120,16 @@ fn replay_debounce_cancel() {
             text: "первый длинный вопрос без знака вопроса который занимает много слов".into(),
             start_time: now,
             end_time: now,
+        
+        typed: false,
         },
         engine_dialogue::Turn {
             speaker: Speaker::Interviewer,
             text: "второй длинный вопрос без знака вопроса который занимает много слов".into(),
             start_time: now,
             end_time: now,
+        
+        typed: false,
         },
     ];
 

@@ -1,5 +1,53 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
+
+/// Запись реестра провайдеров: [providers.<name>].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "def_openrouter_url")]
+    pub base_url: String,
+    #[serde(default = "def_true")]
+    pub enabled: bool,
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: def_openrouter_url(),
+            enabled: true,
+        }
+    }
+}
+
+fn def_openrouter_url() -> String {
+    "https://openrouter.ai/api/v1".into()
+}
+fn def_true() -> bool {
+    true
+}
+
+/// Host → короткое имя провайдера ("api.dslab.tech" → "dslab").
+fn provider_name_from_host(url: &str) -> String {
+    let host = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url);
+    let host = host.split(['/', ':']).next().unwrap_or("");
+    let name = host
+        .split('.')
+        .find(|l| !matches!(*l, "api" | "www" | "openai"))
+        .unwrap_or("custom");
+    let clean: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    if clean.is_empty() {
+        "custom".into()
+    } else {
+        clean
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -23,6 +71,11 @@ pub struct Config {
     pub window: WindowSection,
     #[serde(default)]
     pub chat: ChatSection,
+    #[serde(default)]
+    pub context: ContextSection,
+    /// Реестр провайдеров моделей: [providers.openrouter], [providers.dslab], …
+    #[serde(default)]
+    pub providers: BTreeMap<String, ProviderConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,8 +163,13 @@ impl Default for VadConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PromptsConfig {
+    #[serde(default)]
     pub system: String,
+    #[serde(default)]
     pub persona: String,
+    /// Отдельный системный промпт для ручных запросов (пусто → system).
+    #[serde(default)]
+    pub manual_system: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,6 +340,8 @@ pub struct UiSection {
     pub indicator_corner: String,
     #[serde(default = "def_protection")]
     pub protection: bool,
+    #[serde(default = "def_rail")]
+    pub rail: bool,
 }
 
 impl Default for UiSection {
@@ -291,6 +351,7 @@ impl Default for UiSection {
             opacity: def_opacity(),
             indicator_corner: def_indicator_corner(),
             protection: def_protection(),
+            rail: def_rail(),
         }
     }
 }
@@ -374,6 +435,42 @@ fn def_indicator_corner() -> String {
 fn def_protection() -> bool {
     false
 }
+fn def_rail() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSection {
+    #[serde(default = "def_recent_window")]
+    pub recent_window: usize,
+    #[serde(default = "def_key_turns_cap")]
+    pub key_turns_cap: usize,
+    #[serde(default = "def_summary_max_tokens")]
+    pub summary_max_tokens: u32,
+    #[serde(default)]
+    pub summary_model: String,
+}
+
+impl Default for ContextSection {
+    fn default() -> Self {
+        Self {
+            recent_window: def_recent_window(),
+            key_turns_cap: def_key_turns_cap(),
+            summary_max_tokens: def_summary_max_tokens(),
+            summary_model: String::new(),
+        }
+    }
+}
+
+fn def_recent_window() -> usize {
+    12
+}
+fn def_key_turns_cap() -> usize {
+    12
+}
+fn def_summary_max_tokens() -> u32 {
+    300
+}
 fn def_move_step() -> u32 {
     50
 }
@@ -422,9 +519,68 @@ fn def_cancel_mode() -> String {
 
 impl Config {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, crate::ConfigError> {
-        let config = Self::parse(path)?;
+        let mut config = Self::parse(path)?;
+        config.normalize();
         config.validate()?;
         Ok(config)
+    }
+
+    /// Небомящая миграция к реестру провайдеров:
+    /// 1) легаси llm.base_url+api_key без [providers] → [providers.<host>]
+    ///    с ТЕМИ ЖЕ credentials (замена на openrouter.ai сломала бы авторизацию —
+    ///    STOP Protocol change 030);
+    /// 2) пустой provider при непустом реестре → первый по алфавиту;
+    /// 3) полностью пусто → дефолт openrouter с записью в реестре.
+    pub fn normalize(&mut self) {
+        if self.providers.is_empty() && !self.llm.api_key.is_empty() {
+            let name = self
+                .llm
+                .base_url
+                .as_deref()
+                .map(provider_name_from_host)
+                .unwrap_or_else(|| "custom".into());
+            self.providers.insert(
+                name.clone(),
+                ProviderConfig {
+                    api_key: self.llm.api_key.clone(),
+                    base_url: self.llm.base_url.clone().unwrap_or_default(),
+                    enabled: true,
+                },
+            );
+            self.llm.provider = name;
+        }
+        if self.llm.provider.is_empty() {
+            self.llm.provider = if let Some(first) = self.providers.keys().next() {
+                first.clone()
+            } else {
+                "openrouter".into()
+            };
+        }
+        // Запись по умолчанию — только для встроенного openrouter
+        // (неизвестные имена НЕ синтезируются: их отсутствие — ошибка).
+        if self.llm.provider == "openrouter" {
+            self.providers
+                .entry("openrouter".into())
+                .or_default();
+        }
+    }
+
+    /// Каталог моделей активного провайдера.
+    pub fn get_provider(&self) -> Result<engine_models::OpenAiCompatCatalog, crate::ConfigError> {
+        match self.providers.get(&self.llm.provider) {
+            Some(p) if p.enabled => Ok(engine_models::OpenAiCompatCatalog::new(
+                p.base_url.trim_end_matches('/').to_string(),
+                p.api_key.clone(),
+            )),
+            Some(_) => Err(crate::ConfigError::Validation(format!(
+                "provider {} is disabled",
+                self.llm.provider
+            ))),
+            None => Err(crate::ConfigError::Validation(format!(
+                "provider {} not found",
+                self.llm.provider
+            ))),
+        }
     }
 
     /// Parses without validation (used by the tolerant startup fallback).
@@ -433,7 +589,7 @@ impl Config {
         Ok(toml::from_str(&content)?)
     }
 
-    fn validate(&self) -> Result<(), crate::ConfigError> {
+    pub fn validate(&self) -> Result<(), crate::ConfigError> {
         if self.vad.silence_ms == 0 {
             return Err(crate::ConfigError::Validation(
                 "silence_ms must be > 0".into(),
@@ -497,6 +653,27 @@ impl Config {
                 "chat.cancel_mode must be drop|keep".into(),
             ));
         }
+        if self.context.recent_window == 0 {
+            return Err(crate::ConfigError::Validation(
+                "context.recent_window must be > 0".into(),
+            ));
+        }
+        if self.context.key_turns_cap == 0 {
+            return Err(crate::ConfigError::Validation(
+                "context.key_turns_cap must be > 0".into(),
+            ));
+        }
+        if self.context.summary_max_tokens == 0 {
+            return Err(crate::ConfigError::Validation(
+                "context.summary_max_tokens must be > 0".into(),
+            ));
+        }
+        if !self.providers.is_empty() && !self.providers.contains_key(&self.llm.provider) {
+            return Err(crate::ConfigError::Validation(format!(
+                "llm.provider {} not found in [providers]",
+                self.llm.provider
+            )));
+        }
         Ok(())
     }
 
@@ -509,6 +686,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use engine_models::ModelProvider;
 
     #[test]
     fn tts_defaults() {
@@ -565,6 +743,11 @@ mod tests {
         assert_eq!(c.ui.opacity, 92);
         assert_eq!(c.ui.indicator_corner, "top-right");
         assert!(!c.ui.protection);
+        assert!(c.ui.rail);
+        assert_eq!(c.context.recent_window, 12);
+        assert_eq!(c.context.key_turns_cap, 12);
+        assert_eq!(c.context.summary_max_tokens, 300);
+        assert!(c.context.summary_model.is_empty());
         assert!(!c.window.no_focus);
         assert_eq!(c.window.move_step, 50);
         assert_eq!(c.chat.order, "bottom");
@@ -590,6 +773,24 @@ mod tests {
     }
 
     #[test]
+    fn context_validates() {
+        let mut c = Config::default();
+        c.context.recent_window = 0;
+        let err = c.validate().unwrap_err();
+        assert!(err.to_string().contains("recent_window"));
+
+        let mut c = Config::default();
+        c.context.key_turns_cap = 0;
+        let err = c.validate().unwrap_err();
+        assert!(err.to_string().contains("key_turns_cap"));
+
+        let mut c = Config::default();
+        c.context.summary_max_tokens = 0;
+        let err = c.validate().unwrap_err();
+        assert!(err.to_string().contains("summary_max_tokens"));
+    }
+
+    #[test]
     fn validates_corner() {
         let mut c = Config::default();
         c.ui.indicator_corner = "center".into();
@@ -599,5 +800,90 @@ mod tests {
             .validate()
             .unwrap_err();
         assert!(err.to_string().contains("indicator_corner"));
+    }
+
+    #[test]
+    fn legacy_migration_nonbreaking() {
+        let mut c = Config {
+            llm: LlmConfig {
+                provider: String::new(),
+                api_key: "sk-dslab".into(),
+                model: "gpt-5.6-luna".into(),
+                base_url: Some("https://api.dslab.tech/v1".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        c.normalize();
+        assert_eq!(c.llm.provider, "dslab");
+        let p = c.providers.get("dslab").expect("entry synthesized");
+        // Credentials НЕ подменяются (STOP Protocol 030).
+        assert_eq!(p.api_key, "sk-dslab");
+        assert_eq!(p.base_url, "https://api.dslab.tech/v1");
+        let cat = c.get_provider().unwrap();
+        assert!(cat.base_url().starts_with("https://api.dslab.tech/v1"));
+        assert_eq!(cat.api_key(), "sk-dslab");
+    }
+
+    #[test]
+    fn openrouter_defaults() {
+        let mut c = Config::default();
+        c.normalize();
+        assert_eq!(c.llm.provider, "openrouter");
+        let p = c.providers.get("openrouter").expect("default entry");
+        assert_eq!(p.base_url, "https://openrouter.ai/api/v1");
+        assert!(p.enabled);
+    }
+
+    #[test]
+    fn validates_provider_exists() {
+        let mut c = Config::default();
+        c.llm.provider = "unknown".into();
+        c.providers.insert(
+            "openrouter".into(),
+            ProviderConfig {
+                api_key: "k".into(),
+                ..Default::default()
+            },
+        );
+        let err = c.validate().unwrap_err();
+        assert!(err.to_string().contains("unknown"));
+
+        // Нет записи в реестре → get_provider Err, не паника.
+        assert!(c.get_provider().is_err());
+    }
+
+    #[test]
+    fn legacy_toml_roundtrip_keeps_provider() {
+        let toml_str = r#"
+[llm]
+provider = ""
+api_key = "sk-x"
+model = "gpt-5.6-luna"
+base_url = "https://api.dslab.tech/v1"
+"#;
+        let mut c: Config = toml::from_str(toml_str).unwrap();
+        c.normalize();
+        assert_eq!(c.llm.provider, "dslab");
+        // Сериализация сохраняет реестр.
+        let out = toml::to_string_pretty(&c).unwrap();
+        assert!(out.contains("[providers.dslab]"));
+    }
+
+    #[test]
+    fn active_provider_pick() {
+        let toml_str = r#"
+[llm]
+provider = ""
+api_key = ""
+model = ""
+[providers.openrouter]
+api_key = "sk-or"
+base_url = "https://openrouter.ai/api/v1"
+"#;
+        let mut c: Config = toml::from_str(toml_str).unwrap();
+        c.normalize();
+        assert_eq!(c.llm.provider, "openrouter");
+        assert_eq!(c.get_provider().unwrap().api_key(), "sk-or");
     }
 }
