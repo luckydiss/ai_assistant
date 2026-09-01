@@ -639,7 +639,6 @@ $("#rl-meetings").onclick = () => { location.hash = "#meetings"; };
 $("#rl-contexts").onclick = () => { location.hash = "#contexts"; };
 $("#rl-settings").onclick = () => { location.hash = "#settings/chat"; };
 $("#sb-close").onclick = () => { location.hash = "#meetings"; };
-};
 $("#tb-prot").onclick = () => { location.hash = "#settings/protection"; };
 $("#tb-refresh").onclick = () => route();
 $("#tb-continue").onclick = async () => {
