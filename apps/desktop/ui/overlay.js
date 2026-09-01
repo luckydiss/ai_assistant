@@ -493,7 +493,10 @@ function renderModels(){
       try {
         await invoke("llm_set", { model: m.id, effort: eff });
         mmSelected = m.id;
-        $("#modelName").textContent = modelDisplay(m.name || m.id);
+        // Update both the pill and the label used for new chat bubbles.
+        S.modelDisplay = modelDisplay(m.name || m.id);
+        if (S.cfg) S.cfg.llm_model = m.id;
+        $("#modelName").textContent = S.modelDisplay;
         renderModels();
       } catch (e) { toast(String(e), true); }
     };
@@ -561,6 +564,18 @@ $("#mmRange").onchange = async () => {
   const rawModel = S.cfg.llm_model || S.cfg.model || "";
   S.modelDisplay = S.cfg.model_display || modelDisplay(rawModel);
   $("#modelName").textContent = S.modelDisplay;
+
+  // Keep the pill and the chat bubbles in sync with the model that actually
+  // answers, no matter which window changed it.
+  event.listen("model_changed", (e) => {
+    const m = (e.payload && e.payload.model) || "";
+    if (!m) return;
+    S.modelDisplay = modelDisplay(m);
+    mmSelected = m;
+    if (S.cfg) S.cfg.llm_model = m;
+    const pill = $("#modelName");
+    if (pill) pill.textContent = S.modelDisplay;
+  });
 
   bindTgl("#btnAuto", () => S.auto,  v => { S.auto = v; return invoke("auto_answers_set",{on:v}); })._up();
   bindTgl("#btnTts",  () => S.tts,   v => { S.tts = v;  return invoke("tts_auto_set",{on:v}); })._up();

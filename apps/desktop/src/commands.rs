@@ -29,6 +29,7 @@ pub async fn models_list(cfg: State<'_, ConfigState>) -> Result<Vec<ModelMetadat
 /// Модель валидируется по каталогу провайдера до переключения живого клиента.
 #[tauri::command]
 pub async fn llm_set(
+    app: AppHandle,
     services: State<'_, Services>,
     cfg: State<'_, ConfigState>,
     model: String,
@@ -49,8 +50,18 @@ pub async fn llm_set(
         drop(guard);
         out.save("config.toml").map_err(|e| e.to_string())?;
     }
-    services.orch.set_llm(model, effort);
+    services.orch.set_llm(model.clone(), effort.clone());
+    // Notify every window (overlay + main) so the chat bubbles and the model
+    // pill always show the model that is actually answering.
+    let _ = app.emit("model_changed", ModelChangedView { model, effort });
     Ok(())
+}
+
+/// Payload of the `model_changed` event.
+#[derive(Clone, serde::Serialize)]
+pub struct ModelChangedView {
+    pub model: String,
+    pub effort: Option<String>,
 }
 
 /// Горячие промпты: пересобрать ContextBuilder из текущего конфига + контекста
